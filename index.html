@@ -13,84 +13,249 @@
       name="description"
       content="High-performance HTML based website template."
     />
+    <style>
+      body { font-family: system-ui, Arial; max-width: 820px; margin: 40px auto; padding: 0 16px; }
+      input, button { font-size: 14px; padding: 8px; }
+      .actions { margin-top: 12px; gap: 8px; display:flex; flex-wrap:wrap; }
+      table { width:100%; margin-top:16px; border-collapse: collapse; }
+      th, td { border:1px solid #ddd; padding:6px; text-align:left; font-size:13px; }
+    </style>
+    
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   </head>
   <body>
-    <h1>Vercel HTML Starter</h1>
-    <p>
-      This template is a simple, but powerful single
-      <code>index.html</code> file deployed to
-      <a href="https://vercel.com">Vercel</a>. When your site is deployed, all
-      static assets (like HTML, JavaScript, CSS, images, and more) are deployed
-      globally to every
-      <a href="https://vercel.com/docs/concepts/edge-network/overview"
-        >Vercel Edge Network</a
-      >
-      region.
-    </p>
-    <h2>Simple, privacy-friendly analytics</h2>
-    <p>
-      Want to understand your visitor traffic? Vercel Analytics gives you
-      first-party, privacy-friendly traffic analytics for your HTML site. This
-      template is already configured using the following script:
-    </p>
-    <pre><code>&lt;script defer src="/_vercel/insights/script.js"&gt;&lt;/script&gt;</code></pre>
-    <p>
-      Learn more about
-      <a href="https://vercel.com/analytics">Vercel Analytics</a>.
-    </p>
-    <h2>Integrated with git</h2>
-    <p>
-      Deploying updates to your site is as simple as
-      <code>git push</code> thanks to Vercel's advanced
-      <a href="https://vercel.com/docs/concepts/git">Git Integration</a>.
-      Support for GitHub, GitLab, Bitbucket is zero-configuration, and with the
-      flexible Vercel CLI and API, you can integrate with any tool possible.
-    </p>
-    <p>
-      Learn more about
-      <a href="https://vercel.com/docs/concepts/git">Git Integration</a>.
-    </p>
-    <h2>Fast <code>gzip</code> compression</h2>
-    <p>
-      To help ensure the smallest possible file sizes for your static assets,
-      the Vercel Edge Network compresses files by default using
-      <code>gzip</code>. You can also optionally use
-      <code>brotli</code> compressesion if you prefer.
-    </p>
-    <p>
-      Learn more about
-      <a href="https://vercel.com/docs/concepts/edge-network/compression"
-        >compression</a
-      >.
-    </p>
-    <h2>Advanced routing configuration</h2>
-    <p>
-      Vercel gives you a variety of ways to configure the routing of your
-      website. For example, adding redirects, rewrites, or headers to your page.
-      While you can use <code>vercel.json</code> to define these through JSON,
-      you can also express your routing configuration as code using
-      <a href="https://vercel.com/docs/concepts/functions/edge-middleware"
-        >Vercel Edge Middleware</a
-      >.
-    </p>
-    <p>
-      Middleware runs before the
-      <a href="https://vercel.com/docs/concepts/edge-network/caching"
-        >Vercel Edge Network Cache</a
-      >, so you can configure routing exactly as your application needs. For
-      example, this template uses <code>middleware.js</code> defined in the root
-      of the repository to add additional security headers to the site:
-    </p>
-    <pre><code>referrer-policy: origin-when-cross-origin
-strict-transport-security: max-age=31536000; includeSubDomains; preload
-x-content-type-options: nosniff
-x-dns-prefetch-control: on
-x-frame-options: DENY</code></pre>
-    <p>
-      Learn more about
-      <a href="https://vercel.com/docs/concepts/functions/edge-middleware"
-        >Vercel Edge Middleware</a
-      >.
-    </p>
-  </body>
+    <h2>Export VCF → Excel / CSV</h2>
+    <p>Choose a <code>.vcf</code> file, preview parsed contacts, then export.</p>
+  
+    <input id="fileInput" type="file" accept=".vcf,text/vcard" />
+    <div class="actions">
+      <button id="btnPreview">Preview</button>
+      <button id="btnExportCSV">Export CSV</button>
+      <button id="btnExportXLSX">Export XLSX</button>
+    </div>
+  
+    <div id="status" style="margin-top:12px;color:#333"></div>
+  
+    <div id="preview"></div>
+  
+  <script>
+  /*
+    Simple VCF (vCard) parser that extracts common fields:
+    FN, N, ORG, TITLE, TEL, EMAIL, ADR, NOTE
+    - Handles unfolded lines (lines continued with leading space).
+    - Handles multiple TEL/EMAIL by joining with '; '.
+    - Not a full vCard implementation but practical for common exports.
+  */
+  
+  function unfoldLines(text) {
+    // vCard folding: a line that starts with space or tab is continuation
+    return text.replace(/\r\n[ \t]/g, ''); // remove CRLF + leading space
+  }
+  
+  function parseVCF(text) {
+    text = text.replace(/\r\n/g, '\n'); // normalize
+    text = unfoldLines(text);
+  
+    const cards = text.split(/(?:\n|^)(?=BEGIN:VCARD)/i).filter(Boolean);
+    const results = [];
+  
+    for (const c of cards) {
+      if (!/BEGIN:VCARD/i.test(c)) continue;
+      const entry = {};
+      // split into lines
+      const lines = c.split(/\n/).map(l => l.trim()).filter(Boolean);
+  
+      for (let raw of lines) {
+        // ignore BEGIN/END
+        if (/^BEGIN:VCARD/i.test(raw) || /^END:VCARD/i.test(raw)) continue;
+  
+        // Many properties may have parameters: e.g. TEL;TYPE=cell:+628...
+        // split at first colon (value may include colon) but property params are before colon
+        const idx = raw.indexOf(':');
+        if (idx === -1) continue;
+        const propPart = raw.substring(0, idx);
+        const value = raw.substring(idx + 1);
+  
+        const propName = propPart.split(';')[0].toUpperCase();
+  
+        // collect of interest
+        switch(propName) {
+          case 'FN':
+            entry.fullName = value;
+            break;
+          case 'N':
+            // N:Family;Given;Additional;Prefix;Suffix
+            const parts = value.split(';');
+            entry.lastName = parts[0] || '';
+            entry.firstName = parts[1] || '';
+            break;
+          case 'ORG':
+            entry.organization = value;
+            break;
+          case 'TITLE':
+            entry.title = value;
+            break;
+          case 'TEL':
+            entry.phones = entry.phones || [];
+            entry.phones.push(value);
+            break;
+          case 'EMAIL':
+            entry.emails = entry.emails || [];
+            entry.emails.push(value);
+            break;
+          case 'ADR':
+            // ADR:post-office;extended;street;city;region;postal;country
+            const adrParts = value.split(';');
+            const adr = [
+              adrParts[2], // street
+              adrParts[3], // city
+              adrParts[4], // region
+              adrParts[5], // postal
+              adrParts[6]  // country
+            ].filter(Boolean).join(', ');
+            entry.address = adr;
+            break;
+          case 'NOTE':
+            entry.note = (entry.note ? entry.note + ' ' : '') + value;
+            break;
+          default:
+            // capture other props by name if needed (e.g., URL)
+            if (!entry.other) entry.other = {};
+            if (!entry.other[propName]) entry.other[propName] = value;
+        }
+      }
+  
+      // Normalize arrays into strings for export
+      if (entry.phones) entry.phones = entry.phones.join('; ');
+      if (entry.emails) entry.emails = entry.emails.join('; ');
+  
+      // Derive display name if missing
+      if (!entry.fullName) {
+        entry.fullName = [entry.firstName, entry.lastName].filter(Boolean).join(' ').trim() || '';
+      }
+      results.push(entry);
+    }
+  
+    return results;
+  }
+  
+  function toCSV(rows, columns) {
+    // create CSV with headers
+    const escapeCell = v => {
+      if (v === undefined || v === null) return '';
+      v = String(v);
+      // if contains " or , or newline, quote and escape quotes
+      if (/[",\n]/.test(v)) {
+        return '"' + v.replace(/"/g, '""') + '"';
+      }
+      return v;
+    };
+  
+    const lines = [];
+    lines.push(columns.map(escapeCell).join(','));
+    for (const r of rows) {
+      const line = columns.map(c => escapeCell(r[c] ?? '')).join(',');
+      lines.push(line);
+    }
+    return lines.join('\r\n');
+  }
+  
+  function downloadBlob(content, filename, mime) {
+    const blob = new Blob([content], { type: mime || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      a.remove();
+    }, 500);
+  }
+  
+  function renderPreview(rows) {
+    const preview = document.getElementById('preview');
+    if (!rows.length) {
+      preview.innerHTML = '<p>No contacts parsed.</p>';
+      return;
+    }
+    // build table with common columns
+    const columns = ['fullName','firstName','lastName','organization','title','phones','emails','address','note'];
+    let html = '<table><thead><tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+    for (const r of rows) {
+      html += '<tr>' + columns.map(c => `<td>${(r[c] ?? '')}</td>`).join('') + '</tr>';
+    }
+    html += '</tbody></table>';
+    preview.innerHTML = html;
+  }
+  
+  /* UI wiring */
+  const fileInput = document.getElementById('fileInput');
+  const btnPreview = document.getElementById('btnPreview');
+  const btnExportCSV = document.getElementById('btnExportCSV');
+  const btnExportXLSX = document.getElementById('btnExportXLSX');
+  const status = document.getElementById('status');
+  
+  let lastParsed = [];
+  
+  btnPreview.addEventListener('click', () => {
+    const f = fileInput.files[0];
+    if (!f) { status.textContent = 'Please choose a .vcf file first.'; return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const text = e.target.result;
+        lastParsed = parseVCF(text);
+        renderPreview(lastParsed);
+        status.textContent = `Parsed ${lastParsed.length} contact(s).`;
+      } catch (err) {
+        status.textContent = 'Error parsing file: ' + err.message;
+      }
+    };
+    reader.onerror = () => status.textContent = 'Failed reading file.';
+    reader.readAsText(f, 'utf-8');
+  });
+  
+  btnExportCSV.addEventListener('click', () => {
+    if (!lastParsed.length) { status.textContent = 'No contacts parsed. Click Preview first.'; return; }
+    // columns for CSV
+    const columns = ['fullName','firstName','lastName','organization','title','phones','emails','address','note'];
+    const csv = toCSV(lastParsed, columns);
+    downloadBlob(csv, 'contacts.csv', 'text/csv;charset=utf-8;');
+    status.textContent = 'CSV generated.';
+  });
+  
+  btnExportXLSX.addEventListener('click', () => {
+    if (!lastParsed.length) { status.textContent = 'No contacts parsed. Click Preview first.'; return; }
+    if (typeof XLSX === 'undefined') {
+      status.textContent = 'SheetJS (XLSX library) not loaded. See the page header script tag.';
+      return;
+    }
+    // Convert to worksheet
+    // Ensure consistent columns order
+    const columns = ['fullName','firstName','lastName','organization','title','phones','emails','address','note'];
+    const data = lastParsed.map(r => {
+      const o = {};
+      for (const c of columns) o[c] = r[c] ?? '';
+      return o;
+    });
+  
+    const ws = XLSX.utils.json_to_sheet(data, { header: columns });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Contacts');
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'contacts.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+    status.textContent = 'XLSX generated.';
+  });
+  
+  </script>
+</body>
 </html>
